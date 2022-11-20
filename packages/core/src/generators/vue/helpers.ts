@@ -9,6 +9,8 @@ import { babelTransformExpression } from '../../helpers/babel-transform';
 import { types } from '@babel/core';
 import { pickBy } from 'lodash';
 import { GETTER, stripGetter } from '../../helpers/patterns';
+import { replaceIdentifiers } from '../../helpers/replace-identifiers';
+import { addFunctionDeclaration, getFragmentMethodInformation, removeFunctionDeclaration } from '../../helpers/methods';
 
 export const addPropertiesToJson =
   (properties: MitosisNode['properties']) =>
@@ -111,6 +113,25 @@ function processRefs(input: string, component: MitosisComponent, options: ToVueO
   });
 }
 
+function addPrefixToMethods(input: string, json: MitosisComponent, options: ToVueOptions) {
+  if (options.api === 'composition') return input
+
+  const allMethodNames = Object.entries(json.state).filter(
+    ([_key, value]) => value?.type === 'function' || value?.type === 'method',
+  ).map(([key]) => key);
+
+  const trimmedCode = input.trim();
+  const { name: methodName } = getFragmentMethodInformation(trimmedCode);
+  const isComponentMethod = allMethodNames.includes(methodName || '');
+
+  if (!isComponentMethod) return replaceIdentifiers({ code: input, from: allMethodNames, to: (name) => `this.${name}` })
+  
+  const codeWithFunctionDeclaration = addFunctionDeclaration(trimmedCode);
+  const codeWithReplacedIndentifier = replaceIdentifiers({ code: codeWithFunctionDeclaration, from: allMethodNames, to: (name) => `this.${name}` })
+  return removeFunctionDeclaration(codeWithReplacedIndentifier);
+
+}
+
 // TODO: migrate all stripStateAndPropsRefs to use this here
 // to properly replace context refs
 export const processBinding = ({
@@ -150,6 +171,7 @@ export const processBinding = ({
         // workaround so that getter code is valid and parseable by babel.
         stripGetter,
         (code) => processRefs(code, json, options),
+        (code) => addPrefixToMethods(code, json, options),
         (code) => (preserveGetter && wasGetter ? `get ${code}` : code),
       );
     },

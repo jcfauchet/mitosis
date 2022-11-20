@@ -4,6 +4,7 @@ const tsPreset = require('@babel/preset-typescript');
 const decorators = require('@babel/plugin-syntax-decorators');
 import type { Visitor } from '@babel/traverse';
 import { pipe } from 'fp-ts/lib/function';
+import { addFunctionDeclaration, removeFunctionDeclaration, getFragmentMethodInformation } from './methods';
 
 const handleErrorOrExpression = <VisitorContextType = any>({
   code,
@@ -21,13 +22,12 @@ const handleErrorOrExpression = <VisitorContextType = any>({
 
     // Detect method fragments. These get passed sometimes and otherwise
     // generate compile errors. They are of the form `foo() { ... }`
-    const isMethod = Boolean(
-      !code.startsWith('function') && code.match(/^[a-z0-9_]+\s*\([^\)]*\)\s*[\{:]/i),
-    );
+    const { isMethod } = getFragmentMethodInformation(code);
 
     if (isMethod) {
-      useCode = `function ${useCode}`;
+      useCode = addFunctionDeclaration(useCode);
     }
+
     // Parse the code as an expression (instead of the default, a block) by giving it a fake variable assignment
     // e.g. if the code parsed is { ... } babel will treat that as a block by deafult, unless processed as an expression
     // that is an object
@@ -36,9 +36,7 @@ const handleErrorOrExpression = <VisitorContextType = any>({
       // Remove our fake variable assignment
       str.replace(/let _ =\s/, ''),
     );
-    if (isMethod) {
-      return result.replace('function', '');
-    }
+    if (isMethod) return removeFunctionDeclaration(result);
     return result;
   } catch (err) {
     console.error('Error parsing code:\n', code, '\n', result);
@@ -81,6 +79,7 @@ const trimExpression = (type: ExpressionType) => (code: string) => {
 type ExpressionType = 'expression' | 'unknown' | 'block' | 'functionBody';
 
 const getType = (code: string, initialType: ExpressionType): ExpressionType => {
+
   // match for object literal like { foo: ... }
   if (initialType === 'unknown' && code.trim().match(/^\s*{\s*[a-z0-9]+:/i)) {
     return 'expression';
@@ -108,7 +107,6 @@ export const babelTransformExpression = <VisitorContextType = any>(
   }
 
   const type = getType(code, initialType);
-
   const useCode = type === 'functionBody' ? `function(){${code}}` : code;
 
   if (type !== 'expression') {
